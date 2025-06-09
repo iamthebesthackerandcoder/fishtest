@@ -24,19 +24,20 @@ class FishtestGUI:
         self.root.resizable(True, True)
         self.root.minsize(700, 600)
 
-        # Initialize theme
-        self.theme = UITheme('light')
+        # Load saved configuration first to get theme preference
+        self.config_manager = ConfigManager()
+        self.config = self.config_manager.load_config()
+
+        # Initialize theme with saved preference
+        saved_theme = self.config.get('theme', 'light')
+        self.theme = UITheme(saved_theme)
         self.style = self.theme.apply_theme(self.root)
 
         # Initialize components
-        self.config_manager = ConfigManager()
         self.worker_controller = WorkerController()
         self.notification_manager = NotificationManager()
         self.progress_indicator = ProgressIndicator(self.root)
         self.status_toast = StatusToast(self.root)
-
-        # Load saved configuration
-        self.config = self.config_manager.load_config()
 
         # Create GUI components
         self.create_widgets()
@@ -116,7 +117,7 @@ class FishtestGUI:
         content_frame.pack(fill=tk.BOTH, expand=True)
 
         # Settings section
-        self.settings_frame = SettingsFrame(content_frame, self.config_manager, self.theme)
+        self.settings_frame = SettingsFrame(content_frame, self.config_manager, self.theme, self.on_theme_change)
         self.settings_frame.pack(fill=tk.BOTH, expand=True)
 
         # About section
@@ -146,6 +147,7 @@ Built with Python and tkinter for enhanced user experience."""
         self.root.bind('<Control-l>', lambda e: self.focus_login())
         self.root.bind('<Control-s>', lambda e: self.toggle_worker())
         self.root.bind('<F5>', lambda e: self.refresh_status())
+        self.root.bind('<Control-t>', lambda e: self.toggle_theme())
 
     def focus_login(self):
         """Focus on login username field"""
@@ -163,10 +165,82 @@ Built with Python and tkinter for enhanced user experience."""
         if hasattr(self, 'status_frame'):
             self.status_frame.add_log_message("Status refreshed", 'info')
 
+    def toggle_theme(self):
+        """Toggle between light and dark theme via keyboard shortcut"""
+        current_theme = self.theme.current_theme
+        new_theme = 'dark' if current_theme == 'light' else 'light'
+        self.on_theme_change(new_theme)
+
+        # Update the settings dropdown if it exists
+        if hasattr(self, 'settings_frame') and hasattr(self.settings_frame, 'theme_var'):
+            self.settings_frame.theme_var.set(new_theme.title())
+
     def open_url(self, url):
         """Open URL in default browser"""
         import webbrowser
         webbrowser.open(url)
+
+    def on_theme_change(self, new_theme):
+        """Handle theme change from settings"""
+        try:
+            # Update theme
+            self.theme.switch_theme(new_theme)
+
+            # Reapply theme to root and get new style
+            self.style = self.theme.apply_theme(self.root)
+
+            # Refresh all widgets with new theme
+            self.theme.refresh_all_widgets(self.root)
+
+            # Update all components to use new theme
+            self._update_component_themes()
+
+            # Save theme preference
+            config = self.config_manager.load_config()
+            config['theme'] = new_theme
+            self.config_manager.save_config(config)
+
+            # Show success message
+            self.status_toast.show(f"Theme changed to {new_theme.title()}", toast_type='success')
+
+            # Log the theme change
+            if hasattr(self, 'status_frame'):
+                self.status_frame.add_log_message(f"Theme changed to {new_theme.title()}", 'info')
+
+        except Exception as e:
+            self.status_toast.show(f"Failed to change theme: {e}", toast_type='error')
+            if hasattr(self, 'status_frame'):
+                self.status_frame.add_log_message(f"Theme change failed: {e}", 'error')
+
+    def _update_component_themes(self):
+        """Update all components to use the new theme"""
+        try:
+            # Update login frame theme
+            if hasattr(self, 'login_frame'):
+                self.login_frame.theme = self.theme
+
+            # Update status frame theme
+            if hasattr(self, 'status_frame'):
+                self.status_frame.theme = self.theme
+                # Update log text colors
+                if hasattr(self.status_frame, 'log_text'):
+                    bg_color = self.theme.get_color('bg_secondary')
+                    fg_color = self.theme.get_color('text_primary')
+                    self.status_frame.log_text.config(bg=bg_color, fg=fg_color)
+
+            # Update control frame theme
+            if hasattr(self, 'control_frame'):
+                self.control_frame.theme = self.theme
+
+            # Update settings frame theme
+            if hasattr(self, 'settings_frame'):
+                self.settings_frame.theme = self.theme
+
+            # Force a refresh of the display
+            self.root.update_idletasks()
+
+        except Exception as e:
+            print(f"Error updating component themes: {e}")
         
     def on_login(self):
         """Login to fishtest"""

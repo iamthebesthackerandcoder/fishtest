@@ -602,10 +602,11 @@ class ModernControlFrame(ttk.LabelFrame):
 class SettingsFrame(ttk.LabelFrame):
     """Settings and preferences frame"""
 
-    def __init__(self, parent, config_manager, theme=None):
+    def __init__(self, parent, config_manager, theme=None, theme_change_callback=None):
         super().__init__(parent, text="⚙️ Settings", padding="15", style='Card.TLabelframe')
         self.config_manager = config_manager
         self.theme = theme
+        self.theme_change_callback = theme_change_callback
         self.create_widgets()
 
     def create_widgets(self):
@@ -616,7 +617,9 @@ class SettingsFrame(ttk.LabelFrame):
 
         ttk.Label(theme_frame, text="Theme:", style='Heading.TLabel').pack(side=tk.LEFT)
 
-        self.theme_var = tk.StringVar(value="Light")
+        # Get current theme from the theme object
+        current_theme = "Light" if self.theme and self.theme.current_theme == 'light' else "Dark"
+        self.theme_var = tk.StringVar(value=current_theme)
         theme_combo = ttk.Combobox(theme_frame, textvariable=self.theme_var,
                                   values=["Light", "Dark"], state="readonly", width=10)
         theme_combo.pack(side=tk.RIGHT)
@@ -671,8 +674,15 @@ class SettingsFrame(ttk.LabelFrame):
 
     def on_theme_change(self, event=None):
         """Handle theme change"""
-        # This would trigger a theme change in the main application
-        pass
+        new_theme = self.theme_var.get().lower()
+        if self.theme_change_callback:
+            self.theme_change_callback(new_theme)
+
+        # Show feedback to user
+        from notification_system import StatusToast
+        if hasattr(self, 'master') and hasattr(self.master, 'master'):
+            toast = StatusToast(self.master.master)
+            toast.show(f"Theme changed to {self.theme_var.get()}", toast_type='info')
 
     def save_settings(self):
         """Save current settings"""

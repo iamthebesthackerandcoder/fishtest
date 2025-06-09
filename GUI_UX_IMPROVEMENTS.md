@@ -50,6 +50,7 @@ The Fishtest Worker GUI has been significantly enhanced with modern UX improveme
 - **Ctrl+Q**: Quit application
 - **Ctrl+L**: Focus on login field
 - **Ctrl+S**: Start/Stop worker
+- **Ctrl+T**: Toggle theme (Light/Dark)
 - **F5**: Refresh status
 
 ### Enhanced Login Experience
@@ -67,10 +68,11 @@ The Fishtest Worker GUI has been significantly enhanced with modern UX improveme
 ## 🛠️ New Features
 
 ### Settings Panel
-- **Theme Selection**: Light/Dark mode toggle
+- **Dynamic Theme Selection**: Real-time Light/Dark mode switching with instant visual feedback
 - **Auto-start Options**: Automatic worker startup preferences
 - **Notification Settings**: Granular notification control
 - **System Integration**: System tray minimization option
+- **Theme Persistence**: Automatically saves and loads theme preferences
 
 ### Advanced Logging
 - **Message Categorization**: Color-coded log messages by type

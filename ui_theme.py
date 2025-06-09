@@ -146,6 +146,31 @@ class UITheme:
         """Switch to a different theme"""
         self.current_theme = theme_name
         self.colors = self.LIGHT_THEME if theme_name == 'light' else self.DARK_THEME
+
+    def refresh_all_widgets(self, root):
+        """Recursively update all widgets with new theme"""
+        def update_widget(widget):
+            try:
+                widget_class = widget.winfo_class()
+
+                # Update based on widget type
+                if widget_class == 'Frame':
+                    widget.configure(bg=self.colors['bg_primary'])
+                elif widget_class == 'Label':
+                    widget.configure(bg=self.colors['bg_primary'], fg=self.colors['text_primary'])
+                elif widget_class == 'Text':
+                    widget.configure(bg=self.colors['bg_secondary'], fg=self.colors['text_primary'])
+                elif widget_class == 'Entry':
+                    widget.configure(bg=self.colors['bg_primary'], fg=self.colors['text_primary'])
+
+                # Recursively update children
+                for child in widget.winfo_children():
+                    update_widget(child)
+
+            except Exception:
+                pass  # Some widgets might not support certain configurations
+
+        update_widget(root)
     
     @staticmethod
     def create_tooltip(widget, text):
