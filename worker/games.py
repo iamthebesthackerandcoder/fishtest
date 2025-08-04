@@ -436,7 +436,7 @@ def establish_validated_net(remote, testing_dir, net, global_cache):
             time.sleep(waitTime)
 
 
-def run_single_bench(engine, hash_size, threads, depth):
+def run_single_bench(engine, hash_size, threads, depth, timeout=600):
     bench_time, bench_nodes = None, None
     try:
         with subprocess.Popen(
@@ -455,7 +455,13 @@ def run_single_bench(engine, hash_size, threads, depth):
             bufsize=1,
             close_fds=not IS_WINDOWS,
         ) as p:
-            for line in iter(p.stderr.readline, ""):
+            try:
+                _, stderr_data = p.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired as e:
+                p.kill()
+                message = f"Bench of {engine.name} timed out after {timeout} seconds."
+                raise RunException(message) from e
+            for line in stderr_data.splitlines():
                 if "Total time (ms)" in line:
                     bench_time = float(line.split(": ")[1].strip())
                 if "Nodes searched" in line:
@@ -858,7 +864,7 @@ def setup_engine(
         elif compiler == "clang++":
             comp = "clang"
 
-        # skip temporary the profiled build for apple silicon, see
+        # skip temporarily the profiled build for apple silicon, see
         # https://stackoverflow.com/questions/71580631/how-can-i-get-code-coverage-with-clang-13-0-1-on-mac
         make_cmd = "build" if arch == "apple-silicon" else "profile-build"
         cmd = [
@@ -1025,8 +1031,16 @@ def parse_fastchess_output(
         re.compile(r"Warning;.*Invalid value"),
         # Warning; Illegal move e2e4 played by ...
         re.compile(r"Warning;.*Illegal move"),
-        # Warning; Illegal pv move e2e4 pv; ...
-        re.compile(r"Warning;.*Illegal pv move"),
+        # Warning; Illegal PV move e2e4 pv; ...
+        re.compile(r"Warning;.*Illegal PV move"),
+        # Warning; Move does not match uci move format
+        re.compile(r"Warning;.*Move does not match uci move format"),
+        # Warning; PV continues after checkmate
+        re.compile(r"Warning;.*PV continues after checkmate"),
+        # Warning; PV continues after stalemate
+        re.compile(r"Warning;.*PV continues after stalemate"),
+        # Warning; PV continues after threefold repetition - move ...
+        # -> ignore for now, no error, but see https://github.com/official-stockfish/Stockfish/issues/6138
     )
 
     q = Queue()
@@ -1446,8 +1460,13 @@ def run_games(
             print("Failed to obtain book_sri from server.", file=sys.stderr)
             break
 
-        sri = text_hash(testing_dir / book)
-        if book_sri == sri:
+        try:
+            sri = text_hash(testing_dir / book)
+        except Exception as e:
+            print(f"Exception computing book's sri:\n{e}", file=sys.stderr)
+            sri = None
+
+        if sri is not None and book_sri == sri:
             print(f"Book sri for {book} matches.")
             break
 
@@ -1517,10 +1536,16 @@ def run_games(
     if run_errors:
         raise RunException("\n".join(run_errors))
 
-    if base_nps < 208082 / (1 + 3 * math.tanh((worker_concurrency - 1) / 8)):
+    # This threshold is based on the observed ~70% slowdown of SF 16.1 vs SF 11 on
+    # old hardware (i7-3770K), ensuring that viable old machines are not excluded.
+    # The reference for time control scaling is 691680 nps, from modern hardware.
+    # See GitHub PR #1900 for the full analysis.
+    min_nps_required = 208082 / (1 + 3 * math.tanh((worker_concurrency - 1) / 8))
+    if base_nps < min_nps_required:
         message = (
-            f"This machine is too slow ({base_nps} nps / thread) "
-            f"to run fishtest effectively - sorry!"
+            f"This machine is too slow to run this task effectively - sorry!\n"
+            f"  - Your machine's speed: {base_nps:.0f} nps/thread\n"
+            f"  - Required minimum speed: {min_nps_required:.0f} nps/thread"
         )
         raise FatalException(message)
     # fishtest with Stockfish 11 had 1.6 Mnps as reference nps and

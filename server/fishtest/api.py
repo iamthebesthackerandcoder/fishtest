@@ -6,6 +6,7 @@ import re
 from datetime import UTC, datetime
 from urllib.parse import urlparse
 
+import fishtest.github_api as gh
 from fishtest.schemas import api_access_schema, api_schema, gzip_data
 from fishtest.stats.stat_util import SPRT_elo, get_elo
 from fishtest.util import strip_run, worker_name
@@ -35,7 +36,7 @@ Proper configuration of `nginx` is crucial for this, and should be done
 according to the route/URL mapping defined in `__init__.py`.
 """
 
-WORKER_VERSION = 282
+WORKER_VERSION = 288
 
 
 @exception_view_config(HTTPException)
@@ -227,17 +228,20 @@ class WorkerApi(GenericApi):
         if "task_waiting" in result:
             return self.add_time(result)
 
-        # Strip the run of unneccesary information
+        # Strip the run of unnecessary information
         run = result["run"]
         task = run["tasks"][result["task_id"]]
         min_task = {"num_games": task["num_games"], "start": task["start"]}
         if "stats" in task:
             min_task["stats"] = task["stats"]
-            args = copy.copy(run["args"])
-            book = args["book"]
-            books = self.request.rundb.books
-            if book in books:
-                args["book_sri"] = books[book]["sri"]
+
+        # Add book checksum
+        args = copy.copy(run["args"])
+        book = args["book"]
+        books = self.request.rundb.books
+        if book in books:
+            args["book_sri"] = books[book]["sri"]
+
         min_run = {"_id": str(run["_id"]), "args": args, "my_task": min_task}
         result["run"] = min_run
         return self.add_time(result)
@@ -319,7 +323,7 @@ class WorkerApi(GenericApi):
 
     @view_config(route_name="api_request_version")
     def request_version(self):
-        # By being mor lax here we can be more strict
+        # By being more lax here, we can be more strict
         # elsewhere since the worker will upgrade.
         self.validate_username_password()
         return self.add_time({"version": WORKER_VERSION})
@@ -346,6 +350,10 @@ class WorkerApi(GenericApi):
 
 @view_defaults(renderer="json")
 class UserApi(GenericApi):
+    @view_config(route_name="api_rate_limit")
+    def rate_limit(self):
+        return gh.rate_limit()
+
     @view_config(route_name="api_active_runs")
     def active_runs(self):
         runs = self.request.rundb.runs.find(

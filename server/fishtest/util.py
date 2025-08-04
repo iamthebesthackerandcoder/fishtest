@@ -5,6 +5,7 @@ import re
 from datetime import UTC, datetime
 from functools import cache
 
+import fishtest.github_api as gh
 import fishtest.stats.stat_util
 import numpy as np
 import scipy.stats
@@ -533,26 +534,6 @@ def email_valid(email):
         return False, str(e)
 
 
-def github_repo_valid(url):
-    # Accept no repo for resources contribution
-    if not url:
-        return True
-
-    # Regular expression to match the GitHub repository URL pattern, with optional 'www.'
-    pattern = r"^https:\/\/(www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$"
-    return re.match(pattern, url) is not None
-
-
-def extract_repo_from_link(url):
-    # Validate the URL
-    if not github_repo_valid(url):
-        return None
-
-    # Regular expression to capture the username/repository part of the URL
-    match = re.search(r"github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/?", url)
-    return match.group(1) if match else None
-
-
 def get_hash(engine_options):
     match = re.search("Hash=([0-9]+)", engine_options)
     return int(match.group(1)) if match else 0
@@ -587,3 +568,59 @@ def strip_run(run):
 
 def count_games(stats):
     return stats["wins"] + stats["losses"] + stats["draws"]
+
+
+def tests_repo(run):
+    tests_repo = run["args"]["tests_repo"]
+    if tests_repo != "":
+        return tests_repo
+    else:
+        # very old tests didn't have a separate
+        # tests repo
+        return "https://github.com/official-stockfish/Stockfish"
+
+
+def diff_url(run, master_check=True):
+    tests_repo_ = tests_repo(run)
+    user2, repo = gh.parse_repo(tests_repo_)
+    sha2 = run["args"]["resolved_new"]
+    if "spsa" in run["args"]:
+        user1 = "official-stockfish"
+        sha1 = gh.official_master_sha
+    else:
+        user1 = user2
+        sha1 = run["args"]["resolved_base"]
+    if master_check:
+        im1 = im2 = False
+        try:
+            im1 = gh.is_master(sha1)
+            im2 = gh.is_master(sha2)
+        except Exception as e:
+            print(
+                f"Unable to evaluate is_master({sha1}) or is_master({sha2}): {str(e)}"
+            )
+        else:
+            if im1:
+                user1 = "official-stockfish"
+            if im2:
+                user2 = "official-stockfish"
+    return gh.compare_branches_url(user1=user1, branch1=sha1, user2=user2, branch2=sha2)
+
+
+def ok_hash(tc_ratio, hash):
+    # for historical reasons hash doesn't scale linearly between tc ratios 1-6, so only check 5+.
+    if tc_ratio < 5:
+        return (
+            True  # MTC and STC are assumed fine, could be handled if we really want to
+        )
+    # tc_ratio 6 has has 64 MB, and linearly for all above
+    target_hash = 64 * tc_ratio / 6
+    return 0.6 <= hash / target_hash <= 1.5
+
+
+def reasonable_run_hashes(run):
+    # if this func returns false, then emit warning to user to verify hashes
+    base_hash = get_hash(run["args"]["base_options"])
+    new_hash = get_hash(run["args"]["new_options"])
+    tc_ratio = get_tc_ratio(run["args"]["tc"], run["args"]["threads"])
+    return ok_hash(tc_ratio, base_hash) and ok_hash(tc_ratio, new_hash)

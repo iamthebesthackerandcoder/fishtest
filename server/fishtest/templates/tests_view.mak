@@ -2,6 +2,8 @@
 
 <%!
   import json
+  import fishtest.github_api as gh
+  from fishtest.util import diff_url, tests_repo
 %>
 
 <%namespace name="base" file="base.mak"/>
@@ -62,9 +64,13 @@
 
 <div id="enclosure"${' style="visibility:hidden;"' if show_task >= 0 else "" |n}>
 
+<%
+  diff_url2 = lambda run:diff_url(run, master_check=allow_github_api_calls)
+%>
+
   <h2>
     <span>${page_title}</span>
-    <a href="${h.diff_url(run)}" target="_blank" rel="noopener">diff</a>
+    <a href="${diff_url2(run)}" target="_blank" rel="noopener">diff</a>
   </h2>
 
   <div class="elo-results-top">
@@ -79,7 +85,7 @@
           Diff
           <span id="diff-num-comments">(0 comments)</span>
           <a
-            href="${h.diff_url(run)}"
+            href="${diff_url2(run)}"
             class="btn btn-primary bg-light-primary border-0 mb-2"
             target="_blank" rel="noopener"
           >
@@ -107,6 +113,7 @@
           <span class="text-success copied text-nowrap" style="display: none">Copied!</span>
         </h4>
         <pre id="diff-contents" style="display: none;"><code class="diff"></code></pre>
+        <div id="diff-error" class="text-danger" hidden></div>
       </div>
       <div>
         <h4 style="margin-top: 9px;">Details</h4>
@@ -230,7 +237,7 @@
                 <form action="/tests/approve" method="POST">
                   <input type="hidden" name="run-id" value="${run['_id']}">
                   <button type="submit" id="approve-btn"
-                          class="btn ${'btn-success' if base_same_as_master or 'spsa' in run['args'] else 'btn-warning'} w-100">
+                          class="btn ${'btn-success' if warnings == [] else 'btn-warning'} w-100">
                     Approve
                   </button>
                 </form>
@@ -251,7 +258,6 @@
             Download games
           </button>
         </div>
-
         <div class="col-12 col-sm">
           <a class="btn btn-light border w-100" href="/tests/run?id=${run['_id']}">Reschedule</a>
         </div>
@@ -644,21 +650,23 @@
     diffText.textContent = text;
   }
 
+  function showDiffError(diffError, text) {
+    diffError.innerHTML = text;
+    diffError.hidden = false;
+  }
+
   const fetchDiffThreeDots = async (diffApiUrl) => {
-    try {
-      const token = localStorage.getItem("github_token");
-      const options = {
-        headers: {
-          "Authorization": token ? "token " + token : null,
-          "Accept": "application/vnd.github.diff",
-        }
-      };
-      const text = await fetchText(diffApiUrl, options);
-      return {text: text, count: text?.split("\n")?.length || 0};
-    } catch(e) {
-      console.log("Error fetching diff: " + e);
-      return {text: "", count: 0};
+    const token = localStorage.getItem("github_token");
+    const options = {
+      headers: {
+        Accept: "application/vnd.github.diff",
+      },
+    };
+    if (token) {
+      options.headers.Authorization = "Bearer " + token;
     }
+    const text = await fetchText(diffApiUrl, options);
+    return {text: text, count: text?.split("\n")?.length || 0};
   };
 
   function loadingButton() {
@@ -690,53 +698,40 @@
   }
 
   async function getFileContentFromGitHubApi(url, options) {
+    options.headers = options.headers || {};
+    options.headers["Accept"] = "application/vnd.github.raw+json";
     try {
-      options.headers = options.headers || {};
-      options.headers["Accept"] = "application/vnd.github.v3.raw";
-      const response = await fetch(url, options);
-      if (!response.ok) {
-        if (response.status === 404) {
+      const text = await fetchText(url, options);
+      return text;
+    } catch(e) {
+      if (e instanceof HTTPError) {
+        const status = e.response.status;
+        if (status === 404) {
           return "";
         } else {
-          throw new Error(
-            "Failed to fetch " + url + ": " + response.status + " " + response.statusText
-          );
+          throw e;
         }
       }
-      const text = await response.text();
-      return text;
-    } catch (error) {
-        throw new Error(
-          "Failed to fetch file: " + error
-        );
     }
   }
 
   async function getFilesInBranch(apiUrl, branch, options) {
-    try {
-      const url = apiUrl + "/git/trees/" + branch + "?recursive=1";
-      const response = await fetch(url, options);
-      if (!response.ok) {
-        return null;
+    const url = apiUrl + "/git/trees/" + branch + "?recursive=1";
+    const data = await fetchJson(url, options);
+
+    const filesMap = new Map();
+    data.tree.forEach((entry) => {
+      if (entry.type === "blob") {
+        filesMap.set(entry.path, entry.sha);
       }
-      const data = await response.json();
+    });
 
-      const filesMap = new Map();
-      data.tree.forEach((entry) => {
-        if (entry.type === "blob") {
-          filesMap.set(entry.path, entry.sha);
-        }
-      });
-
-      return filesMap;
-    } catch (error) {
-      console.error("Error fetching files in branch " +  branch + ": ", error);
-      return null;
-    }
+    return filesMap;
   }
 
 
   const diffContents = document.getElementById("diff-contents");
+  const diffError = document.getElementById("diff-error");
   const diffText = diffContents.querySelector("code");
   const toggleBtn = document.getElementById("diff-toggle");
 
@@ -745,10 +740,6 @@
       getFilesInBranch(apiUrlBase, diffBase, options),
       getFilesInBranch(apiUrlNew, diffNew, options),
     ]);
-
-    if (files1 === null || files2 === null) {
-        throw new Error("Failed to fetch files from branches");
-    }
 
     const allFiles = new Set([...files1.keys(), ...files2.keys()]);
 
@@ -814,7 +805,7 @@
       copyDiffBtn.addEventListener("click", () => {
         const textarea = document.createElement("textarea");
         textarea.style.position = "fixed";
-        textarea.textContent = "curl -s ${h.diff_url(run)}.diff | git apply";
+        textarea.textContent = "curl -s ${diff_url2(run)}.diff | git apply";
         document.body.append(textarea);
         textarea.select();
         try {
@@ -830,7 +821,7 @@
       copyDiffBtn = null;
     }
 
-    const diffApiUrl = "${h.diff_url(run)}".replace(
+    const diffApiUrl = "${diff_url2(run)}".replace(
       "//github.com/",
       "//api.github.com/repos/"
     );
@@ -840,11 +831,11 @@
     const token = localStorage.getItem("github_token");
     const options = token ? {
       headers: {
-        "Authorization": "token " + token
+        Authorization: "Bearer " + token
       }
     } : {};
 
-    const testRepo = "${h.tests_repo(run)}";
+    const testRepo = "${tests_repo(run)}";
     const apiUrlNew = testRepo.replace(
       "//github.com/",
       "//api.github.com/repos/"
@@ -852,20 +843,13 @@
 
     const diffNew  = "${run["args"]["resolved_new"][:10]}";
     const apiOfficialMaster = "https://api.github.com/repos/official-stockfish/Stockfish";
-    const baseOfficialMaster = "${run["args"]["official_master_sha"][:10] if run["args"].get("official_master_sha") else ""}";
+    const baseOfficialMaster = ${json.dumps(gh.official_master_sha) | n};
 
     % if run["args"].get("spsa"):
-      const apiUrlBase = apiOfficialMaster;
-      % if run["args"].get("official_master_sha"):
-          const diffBase = baseOfficialMaster;
-      % else: # old tests before this field
-          const diffBase = "master";
-          dots = 3; // fall back to the three dot diff request as the diff will be rebased
-      % endif
+      dots = 3;
+    % elif use_3dot_diff:
+      dots = 3;
     % else:
-      % if run["args"]["new_tag"] == "master" and run["args"]["base_tag"] == pt_info["pt_branch"]:
-          dots = 3; // fall back to the three dot in case of PTs since official is always rebased
-      % endif
       const apiUrlBase = apiUrlNew;
       const diffBase = "${run["args"]["resolved_base"][:10]}";
     % endif
@@ -901,8 +885,35 @@
       fetchComments(diffApiUrl, options);
     } catch (e) {
       console.error(e);
-      text = e + "\n" + "Suggested Fix: Most probably API limit rate exceeded, please try to add a GitHub personal token in your profile or 'View on GitHub'.";
+      text = e;
+      if(e instanceof HTTPError) {
+        const response = e.response;
+        const status = response.status;
+        try {
+          const json = await response.json();
+          if (json.message) {
+            text += "<br>GitHub error message: <em>" + escapeHtml(json.message) + "</em>";
+          }
+        } catch(e) {
+          console.error(e);
+        }
+        if(status == 401) {
+          text += `<br>Note: Apparently you are not allowed to use the GitHub API.
+                  This may be caused by an expired, revoked or otherwise invalid
+                  <a href='https://github.com/settings/personal-access-tokens'
+                  target='_blank'>GitHub personal access token</a> in your <a href='/user'>profile</a>.`
+        } else if(remainingApiCalls(response) === 0) {
+          text += `<br>Note: Apparently the <a href='/rate_limits'>GitHub API rate limit</a> was exceeded.
+                  Try to add a <a href='https://github.com/settings/personal-access-tokens'
+                  target='_blank'>GitHub personal access token</a> to your <a href='/user'>profile</a>
+                  or else use 'View on GitHub'.`
+        }
+      }
+      showDiffError(diffError, text);
+      toggleBtn.hidden = true;
+      return;
     }
+
 
     addDiff(diffText, text);
     showDiff(diffContents, diffText, count, copyDiffBtn, toggleBtn);
@@ -918,7 +929,9 @@
       });
     document.getElementById("diff-section").style.display = "";
 
-    % if run["args"]["base_tag"] == "master":
+    ## The code below is temporarily disabled since after retiring run["args"]["official_master_sha"]
+    ## the fetchDiffTwoDots should be replaced by a 3-dot comparison.
+    % if False and run["args"]["base_tag"] == "master":
       if (baseOfficialMaster) {
         // Check if the diff is already in localStorage and use it if it is
         let run = localStorageDiffs.find(diff => diff["id"] === "${run['_id']}" && diff["masterVsBase"] === true);
